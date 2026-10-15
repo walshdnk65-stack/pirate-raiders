@@ -185,12 +185,20 @@ export class PlayerShip extends Ship {
     this.game.ui.toast(`${a.icon} ${a.name} loaded`, a.desc, 'info');
   }
 
+  /** a shore battery to aim at when no ship is targeted (port raids) */
+  siege: THREE.Vector3 | null = null;
+
   /** Pick the best side to fire from given the current target. */
   tryFire() {
     const t = this.target;
     let side: CannonSide = 'F';
     let aim: THREE.Vector3 | null = null;
-    if (t && t.alive) {
+    if (!(t && t.alive) && this.siege) {
+      const to = this.siege.clone().sub(this.pos).setY(0);
+      const ang = angleDiff(this.heading, Math.atan2(to.x, to.z));
+      side = Math.abs(ang) < 0.6 ? 'F' : ang > 0 ? 'L' : 'R';
+      aim = to.length() > this.range * 1.25 ? null : this.siege.clone();
+    } else if (t && t.alive) {
       const to = t.pos.clone().sub(this.pos);
       const ang = angleDiff(this.heading, Math.atan2(to.x, to.z));
       if (Math.abs(ang) < 0.6) side = 'F';

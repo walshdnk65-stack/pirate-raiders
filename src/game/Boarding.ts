@@ -4,14 +4,24 @@ import type { Game } from './Game';
 import type { AIShip } from '../entities/AIShip';
 import { Character } from '../models/Character';
 import { audio } from '../core/Audio';
-import { clamp, lerp, rand, choose, easeInOut, dampAngle, damp } from '../core/math';
+import { clamp, lerp, rand, choose, easeInOut, dampAngle, damp, headingTo } from '../core/math';
 import { beam } from '../render/GeoBuilder';
 import { PAL } from '../models/Props';
 import { shipClass } from './ShipClasses';
 import { BOARDING, boardingPower, boardingAdvantage, boardingRate } from './BoardingBalance';
+import { settings } from './Settings';
+import { LandArea } from '../world/LandArea';
+import type { Platform } from '../world/TownTypes';
+import type { Enemy } from './combat/Enemy';
+import type { EnemyId } from './combat/EnemyTypes';
+import type { Ship } from '../entities/Ship';
 export { BOARDING, boardingPower, boardingAdvantage, boardingRate };
 
-type Phase = 'approach' | 'jump' | 'brawl' | 'victory' | 'return' | 'defeat';
+/**
+ * approach, then either (quick) jump → brawl or (sword fight) cross → fight → aftermath;
+ * then victory → return, or defeat.
+ */
+type Phase = 'approach' | 'jump' | 'brawl' | 'cross' | 'fight' | 'aftermath' | 'victory' | 'return' | 'defeat';
 
 interface Jumper {
   c: Character;
@@ -23,6 +33,20 @@ interface Jumper {
 }
 
 const ropeMat = new THREE.MeshStandardMaterial({ color: PAL.rope, roughness: 0.9 });
+const plankMat = new THREE.MeshStandardMaterial({ color: PAL.wood, roughness: 0.85 });
+
+/** Who defends each kind of ship when you board her (the last one is her captain or toughest hand). */
+function defenders(typeId: string, team: string, n: number): EnemyId[] {
+  const out: EnemyId[] = [];
+  for (let i = 0; i < n; i++) {
+    const last = i === n - 1;
+    if (team === 'navy') out.push(last ? (n >= 4 ? 'officer' : 'marine') : i % 3 === 2 ? 'musketeer' : 'marine');
+    else if (typeId === 'rivalPirate') out.push(last ? 'elite' : i % 3 === 1 ? 'gunner' : i % 4 === 3 ? 'bruiser' : 'grunt');
+    else if (typeId === 'luxury' || typeId === 'armoured' || typeId === 'steamFreighter') out.push(last && n >= 5 ? 'mate' : i % 2 ? 'guard' : 'deckhand');
+    else out.push(last && n >= 5 ? 'mate' : 'deckhand');
+  }
+  return out;
+}
 
 export interface BoardingView {
   playerCrew: number;
@@ -66,6 +90,14 @@ export class Boarding {
   private lossT = 0;
   private playerMul = 1;
   private enemyMul = 1;
+  /** sword-fight boarding (rather than the quick timing bar) */
+  fightMode = false;
+  private plank: THREE.Mesh | null = null;
+  private deckFoes: Enemy[] = [];
+  private alliesN = 0;
+  private enemyAt = new THREE.Vector3();
+  private hidden: THREE.Object3D[] = [];
+  private leaving = false;
   view: BoardingView = { playerCrew: 0, enemyCrew: 0, playerCrew0: 0, enemyCrew0: 0, needle: 0, zoneC: 0.5, zoneW: 0.2, perfectW: 0.06, result: '', resultT: 0, phase: 'approach', progress: 0, shown: 0, rate: 0, adv: 0, playerPower: 0, enemyPower: 0 };
 
   constructor(private game: Game) {}
@@ -102,6 +134,8 @@ export class Boarding {
     this.boost = 0;
     this.lossT = 0;
     this.view.result = '';
+    this.fightMode = settings.boarding === 'fight';
+    this.leaving = false;
     g.camRig.combatPulse();
     audio.play('whoosh');
     audio.playVoice('arr', p.pos, 0.9);
@@ -204,12 +238,22 @@ export class Boarding {
         p.speed = 0;
         this.cineCam();
         if (this.t >= 1.6) {
-          this.phase = 'jump';
           this.t = 0;
-          this.setupJump();
+          if (this.fightMode) {
+            this.phase = 'cross';
+            this.startFight();
+          } else {
+            this.phase = 'jump';
+            this.setupJump();
+          }
         }
         break;
       }
+      case 'cross':
+      case 'fight':
+      case 'aftermath':
+        this.updateFight();
+        break;
       case 'jump': {
         let allDone = true;
         for (const j of this.jumpers) {
@@ -460,6 +504,223 @@ export class Boarding {
       j.c.play('board');
     }
     audio.play('whoosh');
+  }
+
+  // =====================================================================
+  // Sword-fight boarding: the captain swings across and fights on her deck
+  // =====================================================================
+  /** Walkable deck: slices along the hull, sloping where the deck steps up to the quarterdeck. */
+  private deckPlatforms(ship: Ship, out: Platform[]) {
+    const m = ship.model;
+    const L = m.length;
+    const z0 = -L * 0.45;
+    const z1 = L * 0.42;
+    const n = Math.max(6, Math.round((z1 - z0) / 1.1));
+    for (let i = 0; i < n; i++) {
+      const za = lerp(z0, z1, i / n);
+      const zb = lerp(z0, z1, (i + 1) / n);
+      const zm = (za + zb) / 2;
+      const hw = Math.min(m.halfWidthAt(za), m.halfWidthAt(zb), m.halfWidthAt(zm)) - 0.5;
+      if (hw < 0.45) continue;
+      const c = m.group.localToWorld(new THREE.Vector3(0, 0, zm));
+      const ya = m.group.localToWorld(new THREE.Vector3(0, m.deckYAt(za), za)).y;
+      const yb = m.group.localToWorld(new THREE.Vector3(0, m.deckYAt(zb), zb)).y;
+      out.push({ x: c.x, z: c.z, hx: hw, hz: (zb - za) / 2 + 0.03, rot: ship.heading, y: ya, y2: yb });
+    }
+  }
+
+  private startFight() {
+    const g = this.game;
+    const p = g.player;
+    const e = this.enemy;
+    // lash the hulls together, level and still, so everyone can stand on deck
+    p.pos.x = this.alongPos.x;
+    p.pos.z = this.alongPos.z;
+    p.heading = e.heading;
+    p.speed = e.speed = 0;
+    e.throttle = 0;
+    this.enemyAt.copy(e.pos);
+    for (const s of [p, e] as Ship[]) {
+      s.steady = true;
+      s.pos.y = -0.1;
+      s.roll = s.pitch = s.rollV = s.pitchV = 0;
+      s.root.rotation.y = s.heading;
+      s.body.rotation.set(0, 0, 0);
+      s.body.position.set(0, 0, 0);
+      s.root.updateMatrixWorld(true);
+    }
+    const plats: Platform[] = [];
+    this.deckPlatforms(e, plats);
+    this.deckPlatforms(p, plats);
+    // the boarding plank between the two decks, amidships
+    const side = this.side;
+    const off = e.model.beam / 2 + p.model.beam / 2 + 1.6;
+    const xe = side * (e.model.halfWidthAt(0) - 0.5);
+    const xp = side * (off - (p.model.halfWidthAt(0) - 0.5));
+    const ye = e.model.group.localToWorld(new THREE.Vector3(xe, e.model.deckYAt(0), 0));
+    const yp = e.model.group.localToWorld(new THREE.Vector3(xp, 0, 0));
+    yp.y = p.model.group.localToWorld(new THREE.Vector3(0, p.model.deckYAt(0), 0)).y;
+    const mid = ye.clone().lerp(yp, 0.5);
+    const span = Math.abs(xp - xe);
+    // rot = heading + 90°: the platform's long axis runs across the ships; y is its port end
+    const left = side > 0 ? ye.y : yp.y;
+    const right = side > 0 ? yp.y : ye.y;
+    plats.push({ x: mid.x, z: mid.z, hx: 1.2, hz: span / 2 + 0.35, rot: e.heading + Math.PI / 2, y: left, y2: right });
+    const area = new LandArea([], [], plats);
+    // the plank you can see
+    const len = Math.hypot(yp.x - ye.x, yp.z - ye.z) + 0.8;
+    const plank = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.14, len), plankMat);
+    plank.castShadow = plank.receiveShadow = true;
+    plank.position.copy(mid).setY(mid.y - 0.05);
+    plank.rotation.set(0, Math.atan2(yp.x - ye.x, yp.z - ye.z), 0);
+    plank.rotateX(-Math.atan2(yp.y - ye.y, len));
+    g.scene.add(plank);
+    this.plank = plank;
+    this.addRopes();
+    // her crew are replaced by fighters (they reappear, dizzy, if you win)
+    this.hidden = [...e.crew.map((c) => c.root), ...(e.captain ? [e.captain.root] : [])];
+    for (const o of this.hidden) o.visible = false;
+
+    // how many on each side
+    const pf = g.profile;
+    this.alliesN = clamp(Math.round(Math.sqrt(pf.crew) * 0.85 * this.playerMul), 1, 5);
+    const nFoes = clamp(Math.round(Math.sqrt(e.crewCount) * 1.3), 2, 8);
+    // merchant crews are no match for pirates; the navy is
+    const tier = clamp(Math.round((e.type.difficulty - 1) * 4 + pf.level / 12 + (e.type.team === 'navy' ? 0.6 : 0.4)), 1, 6);
+    const roster = defenders(e.type.id, e.type.team, nFoes);
+    // where you land (her side of the plank) and where your crew start (your side)
+    const onto = e.model.group.localToWorld(new THREE.Vector3(side * (e.model.halfWidthAt(0) - 1.6), e.model.deckYAt(0), 0));
+    const own = p.model.group.localToWorld(new THREE.Vector3(-side * (p.model.halfWidthAt(0) - 1.6), p.model.deckYAt(0), 0));
+    g.enterDeck(area, own, onto, e.name, this.alliesN);
+    const c = g.combat;
+    c.onDefeat = () => this.fightLost();
+    this.deckFoes = [];
+    const L = e.model.length;
+    roster.forEach((id, i) => {
+      // spread along her deck, away from the plank; her captain stands aft
+      const boss = i === roster.length - 1;
+      let pos: THREE.Vector3 | null = null;
+      for (let k = 0; k < 30 && !pos; k++) {
+        const z = boss ? -L * 0.3 + rand(-1.2, 1.2) : rand(-L * 0.36, L * 0.34);
+        const x = rand(-1, 1) * Math.max(0.2, e.model.halfWidthAt(z) - 1.1);
+        const w = e.model.group.localToWorld(new THREE.Vector3(x, e.model.deckYAt(z), z));
+        const y = area.surface(w.x, w.z);
+        if (y === null || w.distanceTo(onto) < 3.2 || this.deckFoes.some((f) => f.f.pos.distanceTo(w) < 1.3)) continue;
+        pos = w.setY(y);
+      }
+      if (!pos) return;
+      const foe = c.spawnFoe(id, tier, pos, headingTo(onto.x - pos.x, onto.z - pos.z), 'deck');
+      foe.home.copy(pos);
+      this.deckFoes.push(foe);
+    });
+    this.t = 0;
+    this.view.enemyCrew0 = this.view.enemyCrew = this.deckFoes.length;
+    audio.play('whoosh', { volume: 0.8 });
+    audio.play('clang', { volume: 0.4, delay: 0.15 });
+    g.ui.place('BOARD HER!', `${e.name} · ${this.deckFoes.length} defenders`);
+  }
+
+  private addRopes() {
+    const g = this.game;
+    const p = g.player;
+    const e = this.enemy;
+    const pr = p.model.group;
+    for (let i = 0; i < 3; i++) {
+      const z = (i - 1) * e.model.length * 0.2;
+      const a = pr.localToWorld(new THREE.Vector3(-this.side * p.model.halfWidthAt(z * 0.6), p.model.deckYAt(0) + 1, z * 0.6));
+      const b = e.model.group.localToWorld(new THREE.Vector3(this.side * e.model.halfWidthAt(z), e.model.deckYAt(z) + 0.8, z));
+      const m = new THREE.Mesh(beam(a, b, 0.06, 5), ropeMat);
+      g.scene.add(m);
+      this.ropes.push(m);
+    }
+  }
+
+  private updateFight() {
+    const g = this.game;
+    const p = g.player;
+    const e = this.enemy;
+    // nothing drifts while people are fighting on deck
+    p.pos.x = this.alongPos.x;
+    p.pos.z = this.alongPos.z;
+    p.heading = e.heading;
+    p.speed = 0;
+    e.pos.x = this.enemyAt.x;
+    e.pos.z = this.enemyAt.z;
+    e.speed = 0;
+    const left = this.deckFoes.filter((f) => !f.f.dead).length;
+    this.view.enemyCrew = left;
+    if (this.phase === 'cross') {
+      // the defenders charge once you've landed
+      if (!g.walker.hopping) {
+        this.phase = 'fight';
+        this.t = 0;
+        for (const f of this.deckFoes) f.notice(g.combat);
+        audio.playVoice('arr', e.pos, 0.85);
+        g.camRig.addShake(0.15);
+      }
+      return;
+    }
+    if (this.phase === 'fight') {
+      if (left === 0 && !g.combat.defeated) {
+        this.phase = 'aftermath';
+        this.t = 0;
+        g.ui.place('SHIP TAKEN!', 'Her crew throw down their arms!');
+        audio.play('mission');
+        const cp = g.combat.player;
+        if (!cp.dead && cp.free) cp.start({ kind: 'victory', anim: 'victory', dur: 1.3, cancelAt: 0.4 });
+        for (const a of g.combat.allies) if (!a.f.dead) a.f.start({ kind: 'victory', anim: 'cheer', dur: 1.5, cancelAt: 0.5 });
+      }
+      return;
+    }
+    // aftermath: a moment to cheer, then back to your own ship
+    if (this.t > 1.8 && !this.leaving) {
+      this.leaving = true;
+      const downed = g.combat.allies.filter((a) => a.f.dead).length;
+      g.combat.collectAll();
+      g.fadeTo(() => {
+        this.leaveDeck();
+        if (downed > 0) {
+          g.profile.crew = Math.max(1, g.profile.crew - downed);
+          g.after(1.2, () => g.ui.toast('🩹 Crew lost', `${downed} of your boarders went over the side.`, 'danger'));
+        }
+        for (const o of this.hidden) o.visible = true;
+        for (const c of [...e.crew, ...(e.captain ? [e.captain] : [])]) {
+          c.play('dizzy');
+          c.express('hurt');
+        }
+        this.win(e);
+      });
+    }
+  }
+
+  /** The captain was knocked out on her deck: dragged back aboard, boarding failed. */
+  private fightLost() {
+    const g = this.game;
+    if (this.leaving) return;
+    this.leaving = true;
+    this.phase = 'aftermath';
+    g.fadeTo(() => {
+      this.leaveDeck();
+      for (const o of this.hidden) o.visible = true;
+      const lost = Math.max(1, Math.round(g.profile.crew * 0.2));
+      g.profile.crew = Math.max(0, g.profile.crew - lost);
+      this.view.playerCrew = g.profile.crew;
+      this.lose();
+      g.after(1.5, () => g.ui.toast('🤕 Dragged back aboard', `You lost ${lost} pirate${lost > 1 ? 's' : ''} in the fight.`, 'danger'));
+    });
+  }
+
+  private leaveDeck() {
+    const g = this.game;
+    g.leaveDeck();
+    this.deckFoes = [];
+    if (this.plank) {
+      this.plank.removeFromParent();
+      this.plank.geometry.dispose();
+      this.plank = null;
+    }
+    g.player.steady = false;
+    this.enemy.steady = false;
   }
 
   private finish() {

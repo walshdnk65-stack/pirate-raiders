@@ -186,6 +186,13 @@ export class Loot {
     this.items.splice(i, 1);
   }
 
+  /** Everything still lying around (scooped up when a fight ends somewhere you can't stay). */
+  takeAll(): Pickup[] {
+    const all = [...this.items];
+    for (let i = this.items.length - 1; i >= 0; i--) this.remove(i);
+    return all;
+  }
+
   clear() {
     for (let i = this.items.length - 1; i >= 0; i--) this.remove(i);
   }

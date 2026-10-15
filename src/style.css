@@ -1454,3 +1454,140 @@ canvas#game {
     font-size: 64px;
   }
 }
+
+/* ---------- settings ---------- */
+.settings-screen {
+  z-index: 40;
+}
+.panel.settings {
+  width: 560px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 22px;
+}
+.panel.settings h2 {
+  margin-bottom: 8px;
+}
+.set-tabs {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+.set-tabs button,
+.seg button,
+.kbtn {
+  font-family: var(--font);
+  font-size: 15px;
+  color: #fff;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.12);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-radius: 10px;
+  padding: 5px 12px;
+}
+.set-tabs button.on,
+.seg button.on {
+  background: linear-gradient(#ffe46b, #ffb21f);
+  color: #5a2d00;
+  border-color: #fff;
+}
+.set-body {
+  overflow-y: auto;
+  padding-right: 6px;
+  min-height: 0;
+}
+.set-body h3 {
+  font-family: var(--font);
+  font-weight: normal;
+  font-size: 19px;
+  color: var(--gold);
+  margin: 14px 0 2px;
+}
+.set-body .opt-row {
+  margin: 6px 0;
+  font-size: 15px;
+}
+.seg {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.rng {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rng output {
+  min-width: 42px;
+  text-align: right;
+  font-size: 13px;
+  opacity: 0.85;
+}
+.set-body input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--gold);
+}
+.set-note {
+  font-size: 13px;
+  font-weight: 700;
+  opacity: 0.75;
+  margin: -2px 0 6px;
+}
+.keylist .kgroup {
+  font-family: var(--font);
+  color: var(--gold);
+  font-size: 16px;
+  margin: 10px 0 2px;
+}
+.krow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-weight: 800;
+  font-size: 14px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.kbtn {
+  min-width: 92px;
+  background: #fff;
+  color: #222;
+}
+.kbtn.changed {
+  background: #ffe9a8;
+}
+.kbtn.listen {
+  background: var(--gold);
+  color: #5a2d00;
+  animation: kpulse 0.8s ease-in-out infinite;
+}
+@keyframes kpulse {
+  50% {
+    transform: scale(1.06);
+  }
+}
+.set-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  gap: 10px;
+}
+.pause-panel .menu-col .btn {
+  min-width: 240px;
+  font-size: 24px;
+}
+@media (max-width: 600px) {
+  .panel.settings {
+    width: auto;
+    padding: 14px 14px;
+  }
+  .set-body .opt-row {
+    flex-wrap: wrap;
+  }
+}

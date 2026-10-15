@@ -8,6 +8,7 @@ import { ENEMIES, tierScale, type EnemyId, type EnemyType, type BossMove } from 
 import { makeWeapon, weaponStats } from './Weapons';
 import { meleeStep, rollAction, type MeleeOpts } from './Moves';
 import { Navigator } from './Nav';
+import { difficultyMul } from '../Settings';
 
 /** What the AI needs from the combat system. */
 export interface CombatCtx {
@@ -157,7 +158,7 @@ export class Enemy {
     const sc = tierScale(tier);
     const f = new Fighter('enemy', choose(t.specs), t.name);
     this.f = f;
-    f.maxHp = f.hp = Math.round(t.hp * sc.hp);
+    f.maxHp = f.hp = Math.round(t.hp * sc.hp * difficultyMul().foeHp);
     f.maxPoise = f.poise = t.poise * (t.kind === 'boss' ? 1 + (tier - 1) * 0.2 : 1);
     f.kbResist = t.kbResist;
     f.radius = t.radius;

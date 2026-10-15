@@ -845,6 +845,93 @@ export function runScenario(game: Game, name: string) {
       }, 900);
       break;
     }
+    case 'deckfight': {
+      // deckfight:<crew>:<shipType>[:<level>[:bot]] – board a ship in sword-fight mode (a bot fights if asked)
+      const pf = g.profile;
+      pf.level = Math.max(pf.level, Number(arg3 ?? 1));
+      toSea();
+      pf.crew = Number(arg ?? 10);
+      const type = (arg2 ?? 'mediumMerchant') as never;
+      const isNavy = String(arg2).startsWith('navy');
+      const m = isNavy ? (g.spawnNavy(type, g.player.pos.clone().add(new THREE.Vector3(60, 0, 0))) as unknown as AIShip) : (g.spawnMerchant(type, 0, 1, 1, g.player.pos.clone().add(new THREE.Vector3(60, 0, 0))) as unknown as AIShip);
+      placeBeside(m, 16, 0);
+      m.applyDamage(m.hp * 0.75, m.pos.clone().setY(2), g.player);
+      if (isNavy) m.disable();
+      setTimeout(() => press('KeyE', 100), 1200);
+      const log: string[] = [];
+      (window as unknown as { botLog: string[] }).botLog = log;
+      const t0 = g.time;
+      let seen = '';
+      const iv = setInterval(() => {
+        const b = g.boarding;
+        const k = `${b.active ? b.phase : 'done'}:${g.state}`;
+        if (k !== seen) {
+          seen = k;
+          log.push(`t=${(g.time - t0).toFixed(1)} ${k} foes=${g.combat.enemies.filter((e) => !e.f.dead).length} allies=${g.combat.allies.length} hp=${Math.round(g.combat.player.hp)} crew=${pf.crew} captured=${m.captured}`);
+          if (b.phase === 'fight' && arg4 === 'bot') startBot(log);
+        }
+        if (!b.active && g.time - t0 > 5) clearInterval(iv);
+      }, 100);
+      break;
+    }
+    case 'raid':
+    case 'raidland': {
+      // raid:<port>[:<level>] – sail up to a port and start a raid (batteries open fire)
+      // raidland:<port>[:<level>[:bot]] – skip the bombardment: land and fight to the treasury
+      const pf = g.profile;
+      pf.level = Math.max(pf.level, Number(arg2 ?? 6));
+      pf.crew = 14;
+      const idx = PORTS.findIndex((p) => p.id === (arg ?? 'royal'));
+      const port = PORTS[idx];
+      toSea();
+      const sea = port.berth.clone().sub(g.towns[idx].center).setY(0).normalize();
+      g.player.pos.copy(port.berth).addScaledVector(sea, 95);
+      g.player.heading = Math.atan2(-sea.x, -sea.z) + Math.PI / 2;
+      g.player.speed = 0;
+      g.camRig.follow(g.player.heading);
+      const log: string[] = [];
+      (window as unknown as { botLog: string[] }).botLog = log;
+      const raid = g.raid as unknown as { start: (i: number) => void; wreck: (b: unknown, q?: boolean) => void; batteries: { port: number; alive: boolean }[]; phase: string };
+      setTimeout(() => {
+        raid.start(idx);
+        log.push(`batteries=${raid.batteries.filter((b) => b.port === idx).length} phase=${raid.phase}`);
+        if (base === 'raidland') {
+          for (const b of raid.batteries) if (b.port === idx && b.alive) raid.wreck(b);
+          log.push(`phase=${raid.phase}`);
+          P.dockAt.call(g, idx, true, true);
+          P.disembark.call(g, true);
+          setTimeout(() => {
+            log.push(`landed state=${g.state} foes=${g.combat.enemies.length}`);
+            if (arg3 === 'bot') startBot(log);
+          }, 1500);
+          const iv = setInterval(() => {
+            const site = g.combat.sites.find((s) => s.def.raid && s.def.port === port.id);
+            // the bot only fights what's near: once the pier is clear, march it up to the treasury
+            if (arg3 === 'bot' && site && site.status === 'active' && !site.triggered && !g.combat.engaged && g.time > 8) {
+              const c = g.combat as unknown as { findSpot: (c: THREE.Vector3, a: number, b: number, a0?: number) => THREE.Vector3 | null };
+              const me = g.walker.pos;
+              const p = c.findSpot(site.geo.center, 10, 14, Math.atan2(me.x - site.geo.center.x, me.z - site.geo.center.z));
+              if (p) {
+                g.walker.place(p, Math.atan2(site.geo.center.x - p.x, site.geo.center.z - p.z));
+                for (const a of g.combat.allies) a.f.pos.copy(p);
+                log.push(`marched to the treasury t=${g.time.toFixed(0)}`);
+              }
+            }
+            if (site?.status === 'cleared' && !log.some((l) => l.startsWith('CLEARED'))) {
+              // open the chest
+              setTimeout(() => {
+                g.walker.place(site.geo.chest!.clone(), 0);
+                setTimeout(() => press('KeyE', 100), 600);
+                setTimeout(() => log.push(`LOOTED phase=${g.raid.phase} money=${pf.money} wanted=${g.wanted.level} objective=${!!g.landObjective}`), 4000);
+              }, 3000);
+              log.push(`CLEARED t=${g.time.toFixed(0)} hp=${Math.round(g.combat.player.hp)} money=${pf.money}`);
+              clearInterval(iv);
+            }
+          }, 500);
+        }
+      }, 1500);
+      break;
+    }
     case 'fightbot': {
       // fightbot:<foes>[:<tier>] – the captain fights on his own (combos, blocks, rolls); logs to window.botLog
       const ids = (arg ?? 'grunt,grunt,gunner').split(',') as EnemyId[];

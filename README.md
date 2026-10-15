@@ -27,6 +27,7 @@ To make a production build, run `npm run build`. It typechecks the code and writ
 | **Q** | Switch ammunition | **E** | Talk · shop · board your ship |
 | **SHIFT** | Speed boost | **Mouse drag / wheel** | Look around / zoom |
 | **E** | Board a surrendered ship · dock at a port · dig treasure | **M** | Town map |
+| **R** | Raid a port (near its harbour) | | |
 | **M** | World map | **TAB** (or **I**) | Inventory |
 | **Esc** | Pause | **Esc** | Leave a shop · pause |
 
@@ -48,6 +49,21 @@ When you're moored at a berth, **E** goes ashore and **W** sets sail. Near an is
 | **G** | Equip a weapon you just picked up |
 
 While you're fighting, the camera stays behind the captain: he always faces where it looks, **A / D** strafe, **S** backs off, and the mouse turns him. A click captures the mouse so moving it turns the camera. It's released when the fight ends or a menu opens (or press **Esc**). During a fight **TAB** is lock-on, so use **I** for the inventory.
+
+Every key can be changed in **⚙️ Settings** (title screen or pause menu). On-screen hints follow your choices.
+
+## Settings
+
+Open **⚙️ Settings** from the title screen or the pause menu (**Esc**). Everything applies straight away and is saved in your browser, separately from your game save, so starting a new game keeps it.
+
+- **Sound:** master, music and effects volume.
+- **Graphics:** High, Medium or Low (see below).
+- **Camera:** mouse sensitivity, invert vertical look, and how much the screen shakes (or off).
+- **Gameplay:**
+  - **Difficulty.** Easy: foes hit 35% softer and have 15% less health. Hard: they hit 30% harder and have 20% more. It applies on land and to cannon fire at sea.
+  - **Boarding.** *Sword fight* (the default) or *Quick*, the original timing-bar brawl.
+  - **Damage numbers** on or off.
+- **Keys:** click an action, then press a new key. If that key already does something, the two actions swap keys. **Esc**, **Tab** and the mouse buttons stay fixed. **Reset to defaults** puts everything back.
 
 ## The loop
 
@@ -118,6 +134,18 @@ Cleared sites fill up again after a few days. Difficulty rises a little as you l
 
 All the tuning lives in `src/game/combat/`: `Weapons.ts`, `EnemyTypes.ts`, `Moves.ts` (attack timings) and `Encounters.ts` (where every site is).
 
+## Port raids
+
+Any port except Skull Cove (a pirate haven) can be raided. The prize is its treasury.
+
+1. **Declare the raid.** Sail within about 170 m of the harbour and press **R**. The skulls on the prompt show how tough the garrison is: Saltmarsh ☠☠, Mermaid Lagoon ☠☠☠, Port Royal ☠☠☠☠, Goldhaven ☠☠☠☠☠. Firing on a shore battery starts a raid too. Your wanted level jumps straight away.
+2. **Silence the shore batteries.** Two or three stone gun towers guard the harbour and fire on you. Your cannons lock on to the nearest one, and a label shows each battery's health. Navy ships will come while you work.
+3. **Land the raiding party.** With every battery down, sail to the berth and press **E**. Up to four of your crew come ashore with you. The townsfolk flee, every shop shuts, and a squad of guards rushes the pier.
+4. **Storm the treasury.** A marker leads you to the stockade. A second wave pours out as you get close, then the garrison holds the treasury itself: guards, navy marines, musketeers and a naval officer.
+5. **Crack the chest.** A huge pile of gold (a few thousand at Saltmarsh, far more at the richer ports), luxury cargo, a good weapon and a treasure map. Then get back to your ship: you're at ★3 (★2 at Saltmarsh and Mermaid Lagoon) and the navy is coming.
+
+Afterwards the port won't let you dock for five days, and its batteries stay in ruins until then. Sail more than about 480 m away mid-raid and it's called off, and the port repairs its guns. Knocked out in town? **Retry** restarts the treasury fight with the first wave at the pier. The ports, their tiers and batteries are in `RAID_PORTS` in `src/game/Raid.ts`, and the garrisons are the `raid` sites in `src/game/combat/Encounters.ts`.
+
 ## Ports
 
 Every port is a fully explorable town with docks, boats, stalls, a tavern with an interior, houses, alleys, props, townsfolk and animals.
@@ -162,7 +190,15 @@ Your player level (from captures, contracts, treasure and trading profit) unlock
 
 ## Boarding
 
-Boarding is a tug-of-war over a **capture bar**:
+Pull alongside a surrendered ship and press **E**. With the **Sword fight** setting (the default), the two hulls are lashed together and you swing across onto her deck:
+
+- **Your boarders** (one to five, depending on your crew size and ship's boarding strength) start on your deck and charge across the plank behind you.
+- **Her defenders** match the ship. Merchants have deckhands, and big merchants add a hulking bosun's mate (luxury ships, armoured cargo ships and steam freighters also carry hired guards). Rival pirates have grunts, gunners, bruisers and an elite corsair captain. Navy ships have marines and musketeers led by a naval officer. Bigger crews mean more defenders (two to eight), and tougher ships and higher levels make them stronger.
+- It's the full land-combat system: combos, blocks, parries, rolls, lock-on, pistols and loot. Nothing drifts or rocks while you fight, and the camera sits a little higher to see over the rails.
+- **Win:** once every defender is down, anything still on deck is scooped up, you're back at the wheel and she's yours, with her gold and cargo. Each of your boarders knocked out goes over the side, costing one pirate.
+- **Lose:** your crew drag you back aboard, you lose a fifth of your pirates, and she flees.
+
+**Quick** boarding is the original tug-of-war over a **capture bar**:
 
 - **Power** is √crew × your ship's boarding strength × boarder-officer bonuses, against √crew × how hard their ship is to take. Ships range from small merchant ×0.8 (easy) to navy interceptor ×2.8 (extremely hard). The square root means each extra pirate helps less than the last.
 - The bar fills at a speed set by the power advantage. That speed has a floor (an even fight still moves) and a **hard cap**, so even 1,000 pirates against 20 need about 5 seconds.
@@ -201,7 +237,7 @@ All the tuning lives in `src/game/BoardingBalance.ts`.
   - the modern ship has rotating gun turrets, a radar mast and a helipad.
 
   There are also eleven NPC designs, including steam freighters, navy ironclads and interceptors. Your upgrades and cosmetics change your ship's model.
-- **Sea combat.** Ballistic cannonballs, five ammo types with special effects, turrets that swing to the firing side, tug-of-war boarding, and officer and item bonuses.
+- **Sea combat.** Ballistic cannonballs, five ammo types with special effects, turrets that swing to the firing side, boarding as a deck fight (or a quick tug-of-war), shore batteries and port raids, and officer and item bonuses.
 - **Land combat.** Real-time sword-and-pistol fights in ports and on islands: combos, blocks, parries, rolls, lock-on, enemy group tactics, bosses, loot and weapon rarities (see above).
 - **Progression.** Story goals, board contracts, XP and levels, seven ship classes and a fleet, wanted levels, upgrades, officers, special items and autosave (to `localStorage`).
 - **Audio.** Procedural Web Audio: ambience, footsteps, voices and an original sea shanty that changes at sea, in port, in combat and in the tavern.
@@ -209,7 +245,7 @@ All the tuning lives in `src/game/BoardingBalance.ts`.
 
 ## Graphics quality
 
-The game picks **Medium** automatically on integrated GPUs and **High** on dedicated ones. If the frame rate drops early on, it steps down one level by itself. You can change it any time in the pause menu (**Esc**).
+The game picks **Medium** automatically on integrated GPUs and **High** on dedicated ones. If the frame rate drops early on, it steps down one level by itself. You can change it any time in **⚙️ Settings**.
 
 | Preset | What it does |
 | --- | --- |
@@ -242,11 +278,12 @@ src/
   entities/             Ship base class, PlayerShip, AIShip (merchants, navy, rival pirates)
   systems/              particles, cannonballs, wakes, seagulls
   game/                 Game (states & glue), economy, contracts, town life (NPCs + animals),
-                        walker (on-foot controller), boarding, missions, wanted level, data
+                        walker (on-foot controller), boarding (deck fights), raids (shore batteries),
+                        settings (preferences + key bindings), missions, wanted level, data
     combat/             land combat: Combat (glue), Fighter, Moves, Enemy (+ crew AI), Nav (A*),
                         EnemyTypes, Weapons, Encounters, Loot, Trails
   world/Sites.ts        camps, forts, caves, hideouts and ruins for encounter sites
-  ui/                   HUD, combat HUD, minimap + town maps, shops, inventory, screens
+  ui/                   HUD, combat HUD, minimap + town maps, shops, inventory, screens, settings
   dev/                  model viewers and scripted test scenarios (dev only)
 ```
 
@@ -259,10 +296,12 @@ src/
   - At sea: `sail`, `combat`, `capture`, `storm`, `wanted`, `rival`, `sink`, `upgraded`, `map`, `bot`.
   - Ship classes: `ship:<class>[:side|close[:fire]]`, `dock:<class>:<port>`, `shipyard:<class>`, `buyship:<class>[:look]`, `progress`. Class ids are `dhow`, `schooner`, `brigantine`, `galleon`, `steamCorvette`, `ironclad` and `modern`.
   - Boarding balance: `boardtest:<crew>:<enemyCrew>`. A bot plays the timing game and logs to `window.boardLog`.
+  - Deck fights: `deckfight:<crew>:<shipType>[:<level>[:bot]]` boards a ship (e.g. `mediumMerchant`, `navyCutter`) in sword-fight mode. With `bot`, a bot fights; it logs to `window.botLog`.
+  - Raids: `raid:<port>[:<level>]` sails up to a port and starts a raid. `raidland:<port>[:<level>[:bot]]` skips the bombardment and lands you in town to fight to the treasury.
   - World edge: `treasure:<0-3>` sails out to a hidden treasure island and logs whether you can dig, to `window.treasureLog`.
   - Navy: `firefight` simulates a long exchange of fire and logs the wanted level to `window.fightLog`. `protect:board|dock|sea` drops navy shots on you while boarding, docked or sailing, and logs to `window.protectLog`.
   - Land combat:
-    - `fight:<foe,foe…>[:<port>[:<tier>]]` spawns foes around you in town (`grunt`, `bruiser`, `gunner`, `elite`, `cinder`, `ironMeg`).
+    - `fight:<foe,foe…>[:<port>[:<tier>]]` spawns foes around you in town (`grunt`, `bruiser`, `gunner`, `elite`, `cinder`, `ironMeg`, plus the ship and garrison troops `deckhand`, `mate`, `marine`, `musketeer`, `officer`, `guard`).
     - `fightbot:<foes>[:<tier>]` and `gunbot:<foes>[:<tier>]`: a bot fights with the blade or the pistol and logs to `window.botLog`.
     - `site:<siteId>[:<distance>]` takes you to an encounter site (ids are in `src/game/combat/Encounters.ts`). `sitebot:<siteId>:<level>:<weapon>:<rarity>` has a levelled-up bot clear it.
     - `ashore:<island name>` rows onto an island. `arms:<weapon>:<rarity>` gives you a weapon and opens the Arms tab.

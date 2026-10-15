@@ -24,6 +24,7 @@ import { Wanted } from './Wanted';
 import { Missions } from './Missions';
 import { Contracts } from './Contracts';
 import { Boarding } from './Boarding';
+import { Raid, RAID_PORTS } from './Raid';
 import { Economy, STALLS } from './Economy';
 import { TownLife, Npc } from './TownLife';
 import { Walker } from './Walker';
@@ -33,6 +34,7 @@ import { Inventory } from '../ui/Inventory';
 import { Screens } from '../ui/Screens';
 import { Birds } from '../systems/Birds';
 import { Combat } from './combat/Combat';
+import { settings } from './Settings';
 import type { MapArea } from '../ui/Minimap';
 import { PAL } from '../models/Props';
 import {
@@ -65,8 +67,9 @@ import { SHIP_CLASSES, SHIP_CLASS_IDS, shipStats, shipClass, upgradeCost, upgrad
  * playing = sailing · docking = gliding into a berth · docked = moored, captain at the wheel
  * land = on foot in a port · shop / dialogue = talking to someone in a port
  * ashore = rowed onto an island without a port (ship at anchor offshore)
+ * deck = fighting on the deck of a ship you're boarding
  */
-type GameState = 'loading' | 'title' | 'playing' | 'docking' | 'docked' | 'land' | 'shop' | 'dialogue' | 'ashore' | 'dead';
+type GameState = 'loading' | 'title' | 'playing' | 'docking' | 'docked' | 'land' | 'shop' | 'dialogue' | 'ashore' | 'deck' | 'dead';
 
 const RUMOURS = [
   "They say a sea monster lives in the Kraken's Teeth, north-east of here.",
@@ -110,6 +113,7 @@ export class Game {
   missions!: Missions;
   contracts: Contracts;
   boarding: Boarding;
+  raid!: Raid;
   birds!: Birds;
   combat!: Combat;
   /** island you've rowed onto (state 'ashore') */
@@ -161,6 +165,7 @@ export class Game {
   private embarking = false;
   private interiorLight = new THREE.PointLight(0xffa24a, 0, 16, 1.6);
   private npcCols: CircleCol[] = [];
+  private raidScareT = 0;
   private seaColliders: THREE.Object3D[] = [];
   private shadowLand = false;
   private reachT = 0;
@@ -169,6 +174,7 @@ export class Game {
   private anchorHeading = 0;
   private rowboat!: THREE.Object3D;
   private isleMaps = new Map<string, MapArea>();
+  private deckMap: MapArea = { port: { id: 'deck', name: 'Boarding' }, center: new THREE.Vector3(), radius: 32, platforms: [], map: { footprints: [], marks: [] } };
   private fadeEl: HTMLElement | null = null;
   fps = 60;
   frameTimes = new Float32Array(180);
@@ -196,6 +202,7 @@ export class Game {
     document.body.appendChild(this.renderer.domElement);
     this.camRig = new CameraRig(innerWidth / innerHeight);
     this.input = new Input(this.renderer.domElement);
+    this.input.setBindings(settings.keys);
     this.projectiles = new Projectiles(this);
     this.wanted = new Wanted(this);
     this.boarding = new Boarding(this);
@@ -209,6 +216,11 @@ export class Game {
         onPlay: (fresh) => this.play(fresh),
         onResume: () => this.setPaused(false),
         onQuality: (q) => this.setQuality(q),
+        getQuality: () => this.quality,
+        onKeys: () => {
+          this.input.setBindings(settings.keys);
+          this.ui?.setHintMode(this.onLand ? 'land' : 'sea', true);
+        },
         onRespawn: () => this.respawn(),
         onCloseMap: () => this.toggleMap(false),
       },
@@ -298,6 +310,8 @@ export class Game {
     this.shop = new ShopUI(this);
     this.inventory = new Inventory(this);
     this.combat = new Combat(this);
+    this.raid = new Raid(this);
+    this.raid.init();
     this.combat.init();
     this.rowboat = this.buildRowboat();
     this.scene.add(this.rowboat);
@@ -486,8 +500,9 @@ export class Game {
   // =====================================================================
   // Accessors
   // =====================================================================
+  /** on foot (in a port, on an island, or on the deck of a ship you're boarding) */
   get onLand() {
-    return this.state === 'land' || this.state === 'shop' || this.state === 'dialogue' || this.state === 'ashore';
+    return this.state === 'land' || this.state === 'shop' || this.state === 'dialogue' || this.state === 'ashore' || this.state === 'deck';
   }
   /** on foot in a port town (not on a wild island) */
   get inTown() {
@@ -495,6 +510,11 @@ export class Game {
   }
   /** What the on-foot map shows: the town, or the island you rowed to. */
   get mapArea(): MapArea {
+    if (this.state === 'deck') {
+      // the boarding fight: just the two ships on open water
+      this.deckMap.center.copy(this.player.pos);
+      return this.deckMap;
+    }
     if (this.state !== 'ashore' || !this.isle) return this.town;
     const isl = this.isle;
     let m = this.isleMaps.get(isl.name);
@@ -1304,7 +1324,10 @@ export class Game {
     return this.berth(this.townIdx).landing;
   }
 
-  private dockAt(idx: number, instant = false) {
+  /** raid landing: you tie up, but nobody's welcoming you (no wanted reset, no contracts) */
+  private raidDock = false;
+  private dockAt(idx: number, instant = false, raid = false) {
+    this.raidDock = raid;
     this.townIdx = idx;
     this.inPort = true;
     this.player.controlsEnabled = false;
@@ -1334,6 +1357,12 @@ export class Game {
   /** Things that happen when you reach a port. */
   private arrive(idx: number, quiet = false) {
     const port = PORTS[idx];
+    if (this.raidDock) {
+      this.player.crewIdle();
+      this.ui.place(`RAID ON ${port.name.toUpperCase()}`, 'Fight your way to the treasury!');
+      this.ui.toast('⚔️ Raiding party ashore!', 'Press <b>E</b> to go ashore. Townsfolk will flee and the shops are shut.', 'danger');
+      return;
+    }
     this.wanted.clear();
     for (const s of this.ships) if (s.type.team === 'navy' && s.state !== 'patrol') s.setState('leave');
     const value = this.cargoValue;
@@ -1374,7 +1403,12 @@ export class Game {
     this.state = 'land';
     this.ui.setHintMode('land');
     this.ui.setHintVisible(true);
-    this.combat.enterLand(`port:${this.townIdx}`, this.area, to, town.port.name, 0);
+    // a raid brings a landing party (one pirate in four, up to four)
+    const party = this.raidDock ? Math.min(4, Math.max(1, Math.floor(this.profile.crew / 4))) : 0;
+    this.combat.enterLand(`port:${this.townIdx}`, this.area, to, town.port.name, party);
+    // point the raiders at the treasury
+    const vault = this.raidDock ? this.combat.sites.find((s) => s.def.raid && s.def.port === town.port.id && s.status !== 'cleared') : null;
+    if (vault) this.landObjective = vault.geo.center.clone();
     if (instant) this.walker.place(to, faceTown);
     else {
       this.walker.locked = true;
@@ -1763,6 +1797,10 @@ export class Game {
         this.holdAtAnchor(dt);
         this.updateAshore(dt);
         break;
+      case 'deck':
+        p.update(dt);
+        this.updateDeck(dt);
+        break;
       case 'dead':
         p.update(dt);
         this.deadT += dt;
@@ -1794,6 +1832,7 @@ export class Game {
     }
     this.resolveShipCollisions();
     this.boarding.update(dt);
+    this.raid.update(dt);
     this.projectiles.update(dt);
     this.particles.update(dt);
     if (this.state === 'playing') this.wanted.update(dt);
@@ -1807,7 +1846,7 @@ export class Game {
     const focus = this.onLand ? this.walker.pos : p.pos;
     this.camRig.boost = lerp(this.camRig.boost, p.boosting ? 1 : 0, dampT(4, dt));
     if (this.state === 'dead') this.camRig.setOrbit(p.pos.clone(), 40, 18, 0.12, 0);
-    const camInput = (this.state === 'playing' && !this.boarding.active) || ((this.state === 'land' || this.state === 'ashore') && !this.inventory.open && !this.walker.hopping && !this.combat.defeated) ? input : null;
+    const camInput = (this.state === 'playing' && !this.boarding.active) || ((this.state === 'land' || this.state === 'ashore' || this.state === 'deck') && !this.inventory.open && !this.walker.hopping && !this.combat.defeated) ? input : null;
     const camTarget = this.onLand ? { pos: this.walker.pos, heading: this.walker.heading, speed: this.walker.speed } : p;
     this.camRig.update(dt, camTarget, camInput, this.ocean);
     // tighter, crisper shadows while walking around town
@@ -1848,6 +1887,7 @@ export class Game {
       this.displayMoney = lerp(this.displayMoney, this.profile.money, dampT(6, dt));
       if (Math.abs(this.displayMoney - this.profile.money) < 1) this.displayMoney = this.profile.money;
       if (this.state === 'ashore') this.zoneLabel = this.isle?.name ?? '';
+      else if (this.state === 'deck') this.zoneLabel = `⚔️ ${this.boarding.enemy.name}`;
       else if (this.onLand) this.zoneLabel = this.activeInterior ? `${this.activeInterior.name}` : PORTS[this.townIdx].name;
       else {
         const zone = zoneAt(p.pos.x, p.pos.z);
@@ -1928,6 +1968,15 @@ export class Game {
     const mods = this.combat.playerMods(dt, input, canMove && !this.walker.hopping && !this.embarking);
     this.walker.update(dt * this.combat.timeScale, canMove ? input : null, this.camRig.walkYaw, this.area, this.npcCols, this.particles, mods);
     this.combat.update(dt, this.npcCols);
+    // a raid: the town empties as you fight through it, and every shop is shut
+    const raiding = this.raid.landedHere;
+    if (raiding) {
+      this.raidScareT -= dt;
+      if (this.raidScareT <= 0) {
+        this.raidScareT = 1;
+        life.scare(this.walker.pos, 45);
+      }
+    }
 
     // which building are we in? (roof + near walls get cut away)
     let inside: Interior | null = null;
@@ -1988,6 +2037,7 @@ export class Game {
       return d * (1.4 - facing * 0.4);
     };
     for (const it of town.interactables) {
+      if (raiding) break;
       if (it.kind === 'recruit') {
         const r = recruitsFor(this.currentPortId, this.profile.day)[it.recruitIdx ?? 0];
         if (!r || this.profile.hiredRecruits.includes(r.id)) continue;
@@ -2014,8 +2064,8 @@ export class Game {
       best = boat;
       bestNpc = null;
     }
-    // chatty townsfolk
-    for (const n of life.npcs) {
+    // chatty townsfolk (they've all run off during a raid)
+    for (const n of raiding ? [] : life.npcs) {
       if (n.state === 'home' || !n.c.root.visible) continue;
       const role = n.def.role;
       if (role === 'vendor' || role === 'keeper' || role === 'recruit' || role === 'smuggler') continue;
@@ -2113,10 +2163,15 @@ export class Game {
         best = s;
       }
     }
+    // a raid: the nearest shore battery beats a ship further away
+    const bat = this.raid.siegeTarget(p.pos);
+    if (bat && (!best || bat.dist < best.pos.distanceTo(p.pos) * 0.8)) best = null;
+    p.siege = bat && !best ? bat.pos : null;
     p.target = best;
     this.aimSide = null;
-    if (best) {
-      const to = _tB.subVectors(best.pos, p.pos);
+    const aimAt = best ? best.pos : p.siege;
+    if (aimAt) {
+      const to = _tB.subVectors(aimAt, p.pos);
       const ang = angleDiff(p.heading, Math.atan2(to.x, to.z));
       this.aimSide = Math.abs(ang) < 0.6 ? 'F' : ang > 0 ? 'L' : 'R';
     }
@@ -2152,16 +2207,43 @@ export class Game {
     }
     // docking at any port
     if (p.pos.distanceTo(PORTS[this.harbourIdx].berth) > 75) this.leftHarbour = true;
+    const raid = this.raid;
     for (let i = 0; i < PORTS.length; i++) {
       const port = PORTS[i];
       const d = p.pos.distanceTo(port.berth);
+      const raidingHere = raid.port === i && raid.phase !== 'none';
+      // a raid: offer it from further out, then track how it's going
+      if (d < 170 && (raidingHere || (RAID_PORTS[port.id] && raid.phase === 'none' && (d > 45 || i !== this.harbourIdx || this.leftHarbour)))) {
+        if (raidingHere && raid.phase === 'bombard') {
+          const n = raid.aliveBatteries(i).length;
+          this.ui.prompt(`💣 Silence the shore batteries! (${n} left)`, 'red');
+          return;
+        }
+        if (raidingHere && raid.phase === 'landing') {
+          if (d < 45) {
+            this.ui.prompt(`<kbd>E</kbd>⚔️ LAND THE RAIDING PARTY`, 'red');
+            if (input.pressed('KeyE')) this.dockAt(i, false, true);
+          } else this.ui.prompt(`⚓ Sail into ${port.name} harbour to land`, 'blue');
+          return;
+        }
+        if (d > 45 && !raidingHere) {
+          if (raid.cooling(i)) this.ui.prompt(`🏚️ ${port.name} is still licking its wounds (${raid.daysLeft(i)} days)`, 'blue');
+          else {
+            this.ui.prompt(`<kbd>R</kbd>💣 RAID ${port.name.toUpperCase()} ${'☠'.repeat(RAID_PORTS[port.id].tier)}`, 'red');
+            if (input.pressed('KeyR')) raid.start(i);
+          }
+          return;
+        }
+      }
       if (d > 45 || (i === this.harbourIdx && !this.leftHarbour)) continue;
       const hostile = this.ships.some((s) => s.team === 'navy' && (s.state === 'chase' || s.state === 'attack') && s.pos.distanceTo(p.pos) < 110);
-      if (hostile) this.ui.prompt('⚠️ Navy too close to dock!', 'red');
+      if (raid.cooling(i)) this.ui.prompt(`⚠️ ${port.name} won't let you dock after your raid (${raid.daysLeft(i)} days)`, 'red');
+      else if (hostile) this.ui.prompt('⚠️ Navy too close to dock!', 'red');
       else if (port.lawful && this.wanted.level >= 2) this.ui.prompt(`⚠️ ${port.name} won't let wanted pirates dock!`, 'red');
       else {
-        this.ui.prompt(`<kbd>E</kbd>⚓ DOCK AT ${port.name.toUpperCase()}`, 'blue');
+        this.ui.prompt(`<kbd>E</kbd>⚓ DOCK AT ${port.name.toUpperCase()}${RAID_PORTS[port.id] ? ' &nbsp; <kbd>R</kbd>💣 RAID' : ''}`, 'blue');
         if (input.pressed('KeyE')) this.dockAt(i);
+        else if (RAID_PORTS[port.id] && input.pressed('KeyR')) raid.start(i);
       }
       return;
     }
@@ -2258,6 +2340,59 @@ export class Game {
       if (best) break;
     }
     return best;
+  }
+
+  /** Fade out, run fn, fade back in (for scene changes driven from outside, like boarding). */
+  fadeTo(fn: () => void) {
+    this.fade(fn);
+  }
+
+  // =====================================================================
+  // Boarding fights: on foot on the deck of a ship you're boarding
+  // =====================================================================
+  /** Swing across from the wheel onto her deck; your boarders start on your own deck. */
+  enterDeck(area: LandArea, own: THREE.Vector3, onto: THREE.Vector3, name: string, allies: number) {
+    const from = this.captainWorldPos();
+    this.state = 'deck';
+    if (this.player.captain) this.player.captain.root.visible = false;
+    this.walker.visible = true;
+    this.walker.locked = true;
+    if (this.inventory.open) this.inventory.toggle(false);
+    this.combat.enterLand('deck', area, own, name, allies);
+    const face = headingTo(onto.x - from.x, onto.z - from.z);
+    this.walker.hopTo(from, onto, () => {
+      this.walker.locked = false;
+      this.walker.heading = face;
+    }, 1.0);
+    this.camRig.walk(face + Math.PI, 1.2);
+    // a little higher than ashore, to look down over the rails and rigging
+    this.camRig.walkPitch = 0.58;
+    this.ui.setHintMode('land');
+    this.ui.setHintVisible(true);
+    this.ui.prompt(null);
+    audio.playVoice('arr', from, 1);
+  }
+
+  /** Back to the wheel of your own ship (the boarding takes it from there). */
+  leaveDeck() {
+    this.combat.leaveLand();
+    this.walker.visible = false;
+    this.walker.locked = false;
+    if (this.player.captain) this.player.captain.root.visible = true;
+    this.state = 'playing';
+    this.camRig.colliders = this.seaColliders;
+    this.ui.setHintMode('sea');
+    this.ui.prompt(null);
+  }
+
+  private updateDeck(dt: number) {
+    const input = this.input;
+    this.npcCols.length = 0;
+    const canMove = !this.inventory.open && !this.bigMapOpen;
+    const mods = this.combat.playerMods(dt, input, canMove && !this.walker.hopping);
+    this.walker.update(dt * this.combat.timeScale, canMove ? input : null, this.camRig.walkYaw, this.combat.area, this.npcCols, this.particles, mods);
+    this.combat.update(dt, this.npcCols);
+    this.ui.prompt(this.combat.defeated ? null : this.combat.prompt, 'blue');
   }
 
   /** Quick fade to black and back (scene changes like rowing ashore). */
@@ -2579,6 +2714,8 @@ export class Game {
       if (this.landing.distanceTo(me) > 30 && !this.landObjective) list.push({ key: 'ship', pos: this.landing.clone().setY(5), kind: 'poi', text: '⛵ Your ship' });
       return list;
     }
+    for (const b of this.raid.markers()) list.push({ key: b.key, pos: b.pos, kind: 'poi', text: `💣 Battery ${Math.round(b.hp * 100)}%` });
+    if (p.siege) list.push({ key: 'target', pos: p.siege.clone().setY(p.siege.y + 2.5), kind: 'target' });
     for (const s of this.ships) {
       if (s.sinking || s.removeMe) continue;
       const d = s.pos.distanceTo(p.pos);

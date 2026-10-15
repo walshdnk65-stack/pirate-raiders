@@ -15,16 +15,25 @@ export class Input {
   /** called inside the mousedown handler (a user gesture, so pointer lock may be requested) */
   onCanvasDown: ((button: number) => void) | null = null;
 
+  /** rebound keys: physical code → the action's default code the game listens for */
+  private remap = new Map<string, string>();
+  /** default keys whose action now lives on another key */
+  private unbound = new Set<string>();
+
   constructor(private canvas: HTMLElement) {
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) e.preventDefault();
-      this.keys.add(e.code);
-      this.pressedKeys.add(e.code);
+      const c = this.translate(e.code);
+      if (!c) return;
+      this.keys.add(c);
+      this.pressedKeys.add(c);
     });
     window.addEventListener('keyup', (e) => {
-      this.keys.delete(e.code);
-      this.releasedKeys.add(e.code);
+      const c = this.translate(e.code);
+      if (!c) return;
+      this.keys.delete(c);
+      this.releasedKeys.add(c);
     });
     window.addEventListener('blur', () => {
       this.keys.clear();
@@ -67,6 +76,27 @@ export class Input {
       },
       { passive: false },
     );
+  }
+
+  /**
+   * Apply key bindings ({ default code: key pressed instead }). The game keeps listening for the
+   * default codes; a rebound key is translated to its action's code, and the old key goes quiet.
+   */
+  setBindings(keys: Record<string, string>) {
+    this.remap.clear();
+    this.unbound.clear();
+    for (const [code, phys] of Object.entries(keys)) {
+      if (!phys || phys === code) continue;
+      this.remap.set(phys, code);
+      this.unbound.add(code);
+    }
+    this.keys.clear();
+  }
+
+  private translate(code: string): string | null {
+    const m = this.remap.get(code);
+    if (m) return m;
+    return this.unbound.has(code) ? null : code;
   }
 
   /** Dev/testing: simulate a key press or release. */

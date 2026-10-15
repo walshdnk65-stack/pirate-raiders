@@ -30,6 +30,8 @@ export interface SiteDef {
   waves?: EnemyId[][];
   /** placement band on an island, as fractions of its radius */
   ring?: [number, number];
+  /** port raid: the treasury garrison (only turns out when you raid the port from the sea) */
+  raid?: boolean;
   /** days before the site is occupied again after you clear it */
   respawnDays: number;
   blurb: string;
@@ -42,6 +44,11 @@ export const SITES: SiteDef[] = [
   { id: 'salt-bandits', name: 'Marsh Bandits', icon: '⚔️', port: 'salt', site: 'ruins', enc: 'patrol', tier: 1, foes: ['grunt', 'grunt', 'grunt'], respawnDays: 2, blurb: 'Bandits prowl the old ruins above the fishing village.' },
   { id: 'gold-thieves', name: "Thieves' Ambush", icon: '⚠️', port: 'gold', site: 'ruins', enc: 'ambush', tier: 3, foes: ['elite', 'grunt', 'grunt', 'gunner'], respawnDays: 3, blurb: 'The Goldhaven thieves’ guild waits for rich captains.' },
   { id: 'lagoon-wreckers', name: "Wreckers' Beach", icon: '⚔️', port: 'lagoon', site: 'beach', enc: 'camp', tier: 3, foes: ['grunt', 'gunner', 'gunner', 'bruiser'], respawnDays: 3, blurb: 'Wreckers lure ships onto the rocks, then loot them.' },
+  // ---------------- port raids: treasuries behind stockades (waves[0] meets you at the pier) ----------------
+  { id: 'salt-raid', name: 'Saltmarsh Tithe Barn', icon: '💰', port: 'salt', raid: true, site: 'fort', enc: 'camp', tier: 2, foes: ['officer', 'guard', 'guard', 'musketeer'], waves: [['guard', 'guard'], ['guard', 'musketeer']], respawnDays: 5, blurb: 'The village tithes, kept under lock and key.' },
+  { id: 'lagoon-raid', name: 'Pearl Vault', icon: '💰', port: 'lagoon', raid: true, site: 'fort', enc: 'camp', tier: 3, foes: ['officer', 'marine', 'guard', 'musketeer', 'guard'], waves: [['guard', 'guard', 'musketeer'], ['marine', 'guard']], respawnDays: 5, blurb: 'Mermaid Lagoon keeps its pearls behind a stockade.' },
+  { id: 'royal-raid', name: 'Royal Treasury', icon: '💰', port: 'royal', raid: true, site: 'fort', enc: 'camp', tier: 4, foes: ['officer', 'marine', 'marine', 'musketeer', 'musketeer', 'guard'], waves: [['marine', 'marine', 'musketeer'], ['guard', 'marine', 'musketeer']], respawnDays: 5, blurb: 'The governor’s gold, guarded by marines.' },
+  { id: 'gold-raid', name: 'Bullion Vault', icon: '💰', port: 'gold', raid: true, site: 'fort', enc: 'camp', tier: 5, foes: ['officer', 'officer', 'marine', 'musketeer', 'musketeer', 'marine'], waves: [['marine', 'marine', 'musketeer', 'guard'], ['officer', 'marine', 'musketeer']], respawnDays: 5, blurb: 'Goldhaven’s bullion. The richest prize on the sea.' },
   // ---------------- islands: row ashore ----------------
   { id: 'coconut-patrol', name: 'Beachcombers', icon: '⚔️', island: 'Coconut Key', site: 'beach', enc: 'patrol', tier: 1, foes: ['grunt', 'grunt'], ring: [0.45, 0.7], respawnDays: 2, blurb: 'A couple of rough beachcombers.' },
   { id: 'turtle-patrol', name: 'Shoal Lookouts', icon: '⚔️', island: 'Turtle Shoal', site: 'beach', enc: 'patrol', tier: 1, foes: ['grunt', 'gunner'], ring: [0.3, 0.6], respawnDays: 2, blurb: 'Lookouts watching for passing merchants.' },

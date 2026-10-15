@@ -19,6 +19,7 @@ import { meleeStep, heavyStrike, rollAction, staggerAction, knockdownAction, dea
 import { weaponStats, weaponName, rollWeapon, makeWeapon, weaponDps, upgradePrice, RARITIES, EFFECTS, type WeaponItem, type Rarity } from './Weapons';
 import { CombatHUD } from '../../ui/CombatHUD';
 import { propGeometry } from '../../models/Character';
+import { difficultyMul } from '../Settings';
 
 /** Runtime state of an encounter site. */
 export interface SiteRun {
@@ -91,6 +92,9 @@ export class Combat implements CombatCtx {
   boss: Enemy | null = null;
   /** time scale for hit-stop (the game slows the walker with it too) */
   timeScale = 1;
+  /** set by fights with their own way out (boarding): called instead of the Retry / Return screen */
+  onDefeat: (() => void) | null = null;
+  private defeatHandled = false;
   /** freshly looted weapon the G key equips */
   pendingEquip: { uid: string; t: number } | null = null;
   private calmT = 0;
@@ -189,7 +193,7 @@ export class Combat implements CombatCtx {
         const town = g.towns[idx];
         area = g.areas[idx];
         const avoid = [...town.interactables.map((i) => i.pos), town.landing, ...[...town.spots.values()].map((s) => s.pos)];
-        const c = findPortSpot(area, town.center, town.radius, town.nav.nodes, avoid, 9, seed);
+        const c = findPortSpot(area, town.center, town.radius, town.nav.nodes, [...avoid, ...this.sites.filter((s) => s.land === `port:${idx}`).map((s) => s.geo.center)], def.site === 'fort' ? 11 : 9, seed);
         if (!c) continue;
         const rot = headingTo(town.center.x - c.x, town.center.z - c.z);
         geo = buildSite(def.site, c, rot, seed);
@@ -303,6 +307,7 @@ export class Combat implements CombatCtx {
     for (const t of this.trails) t.release();
     this.active = false;
     this.defeated = false;
+    this.onDefeat = null;
     this.lock = null;
     this.boss = null;
     this.combatMode = false;
@@ -1043,7 +1048,7 @@ export class Combat implements CombatCtx {
     cam.followYaw = f.drawn && !cam.lockOn && !f.aiming && pa && (pa.kind === 'attack' || pa.kind === 'heavy' || pa.kind === 'shoot') ? f.heading : null;
     cam.aimK += ((f.aiming ? 1 : 0) - cam.aimK) * Math.min(1, dt * 10);
     cam.fightK += ((f.drawn ? 1 : 0) - cam.fightK) * Math.min(1, dt * 2);
-    if (engaged && !this.onIsland) {
+    if (engaged && this.land.startsWith('port:')) {
       this.scareT -= dt;
       if (this.scareT <= 0) {
         this.scareT = 0.6;
@@ -1056,7 +1061,12 @@ export class Combat implements CombatCtx {
     // ---- defeat ----
     if (this.defeated) {
       this.defeatT += dt;
-      if (this.defeatT > 1.8 && !this.hud.defeatShown) {
+      if (this.onDefeat) {
+        if (this.defeatT > 1.8 && !this.defeatHandled) {
+          this.defeatHandled = true;
+          this.onDefeat();
+        }
+      } else if (this.defeatT > 1.8 && !this.hud.defeatShown) {
         this.hud.showDefeat(this.onIsland);
         g.input.unlockPointer();
       }
@@ -1193,6 +1203,7 @@ export class Combat implements CombatCtx {
     const crit = byPlayer && !splash && Math.random() < (att.weapon?.crit ?? 0.08);
     if (crit) dmg *= 1.6;
     dmg *= t.defMul;
+    if (att.team === 'enemy') dmg *= difficultyMul().taken;
     const facing = Math.abs(angleDiff(t.heading, from)) < 1.45;
     let blocked = false;
     const crushing = byPlayer && att.melee?.effect === 'crushing' && !ranged;
@@ -1326,6 +1337,7 @@ export class Combat implements CombatCtx {
       // the captain falls
       this.defeated = true;
       this.defeatT = 0;
+      this.defeatHandled = false;
       this.lock = null;
       this.charging = false;
       this.profile.land.defeats++;
@@ -1634,9 +1646,13 @@ export class Combat implements CombatCtx {
     openChest(s.geo);
     const at = s.geo.chest!.clone().setY(s.geo.chest!.y + 1.2);
     const sc = tierScale(s.tier);
-    const boss = s.def.enc === 'boss';
-    const gold = (boss ? 900 : 140) * sc.gold * rand(0.85, 1.2);
+    const boss = s.def.enc === 'boss' || !!s.def.raid;
+    const gold = (s.def.raid ? 1500 : boss ? 900 : 140) * sc.gold * rand(0.85, 1.2);
     for (let i = 0; i < (boss ? 12 : 5); i++) this.loot.spawn('gold', at, Math.round(gold / (boss ? 12 : 5)));
+    if (s.def.raid) {
+      this.loot.spawn('cargo', at, 3, { cargo: choose(['goldware', 'jewels', 'silk'] as CargoId[]) });
+      this.game.raid.onLooted(Math.round(gold));
+    }
     this.loot.spawn('scrap', at, 2 + Math.floor(Math.random() * 3) + (boss ? 4 : 0));
     this.loot.spawn('shot', at, 4 + Math.floor(Math.random() * 4));
     const wChance = boss ? 1 : s.def.site === 'fort' ? 0.6 : 0.35;
@@ -1653,6 +1669,16 @@ export class Combat implements CombatCtx {
   // =====================================================================
   // Encounter sites
   // =====================================================================
+  /** A foe for a fight that isn't an encounter site (a ship's deck, a port raid's garrison). */
+  spawnFoe(id: EnemyId, tier: number, pos: THREE.Vector3, facing: number, tag: string) {
+    return this.spawnEnemy(id, tier, pos, facing, tag);
+  }
+
+  /** Scoop up everything still lying about (the fight's over and you're leaving). */
+  collectAll() {
+    for (const p of this.loot.takeAll()) this.collect(p);
+  }
+
   private spawnEnemy(id: EnemyId, tier: number, pos: THREE.Vector3, facing: number, siteId: string) {
     const e = new Enemy(id, tier, pos, facing);
     e.siteId = siteId;
@@ -1745,6 +1771,27 @@ export class Combat implements CombatCtx {
     });
   }
 
+  /** Spawn a site; a raid's treasury also sends its first wave down to the pier. */
+  private spawnRaidOr(s: SiteRun) {
+    this.spawnSite(s);
+    if (!s.def.raid) return;
+    const me = this.player.pos;
+    this.raidWave(s, s.def.waves?.[0] ?? [], me, headingTo(s.geo.center.x - me.x, s.geo.center.z - me.z));
+  }
+
+  /** Guards charging at you from the direction of the treasury. */
+  private raidWave(s: SiteRun, ids: EnemyId[], me: THREE.Vector3, toward: number) {
+    ids.forEach((id, i) => {
+      const p = this.findSpot(me, 14, 20, toward + (i - (ids.length - 1) / 2) * 0.45) ?? this.findSpot(me, 12, 20);
+      if (!p) return;
+      // tagged apart from the garrison so their shouts don't pull the treasury guards off their posts
+      const e = this.spawnEnemy(id, s.tier, p, headingTo(me.x - p.x, me.z - p.z), `${s.def.id}:wave`);
+      e.home.copy(p);
+      s.enemies.push(e);
+      setTimeout(() => this.enemies.includes(e) && !e.f.dead && e.notice(this), 600 + i * 150);
+    });
+  }
+
   private despawnSite(s: SiteRun) {
     for (const e of s.enemies) {
       const i = this.enemies.indexOf(e);
@@ -1785,10 +1832,17 @@ export class Combat implements CombatCtx {
       }
       if (s.land !== this.land) continue;
       const d = s.geo.center.distanceTo(me);
-      if (s.status === 'dormant' && d < (entering ? 95 : 80)) this.spawnSite(s);
+      // a treasury's garrison only turns out when you raid the port
+      const raid = !!s.def.raid;
+      const raiding = raid && this.game.raid.landed(s.def.port!);
+      if (raid && !raiding) {
+        if (s.status === 'active') this.despawnSite(s);
+        continue;
+      }
+      if (s.status === 'dormant' && (raiding || d < (entering ? 95 : 80))) this.spawnRaidOr(s);
       else if (s.status === 'active') {
         const fighting = s.enemies.some((e) => !e.f.dead && e.engaged);
-        if (d > 140 && !fighting && s.escort?.phase !== 'walking') this.despawnSite(s);
+        if (d > 140 && !fighting && s.escort?.phase !== 'walking' && !raiding) this.despawnSite(s);
         else this.tickSite(s, dt);
       }
     }
@@ -1823,6 +1877,13 @@ export class Combat implements CombatCtx {
       if (!this.player.drawn) this.drawWeapon();
     }
     if (def.enc === 'escort') this.tickEscort(s, dt);
+    // raids: a second wave rushes out as you near the treasury
+    if (def.raid && !s.triggered && me.distanceTo(s.geo.center) < 38 && !this.player.dead) {
+      s.triggered = true;
+      this.raidWave(s, def.waves?.[1] ?? [], me, headingTo(s.geo.center.x - me.x, s.geo.center.z - me.z));
+      this.game.ui.place('TO ARMS!', 'The garrison rushes out to meet you!');
+      audio.play('alarm', { volume: 0.5 });
+    }
     // everyone down: site cleared
     if (s.enemies.length && s.enemies.every((e) => e.f.dead) && def.enc !== 'escort') this.clearSite(s);
   }
@@ -1837,7 +1898,7 @@ export class Combat implements CombatCtx {
     const gold = Math.round(100 * sc.gold * (s.def.enc === 'boss' ? 4 : 1));
     this.game.addXp(xp);
     this.game.addMoney(gold);
-    const what = s.def.enc === 'ambush' ? 'AMBUSH SURVIVED!' : s.def.enc === 'patrol' ? 'PATROL DEFEATED!' : s.def.site === 'fort' ? 'FORT CAPTURED!' : s.def.enc === 'boss' ? 'LAIR CONQUERED!' : 'CAMP CLEARED!';
+    const what = s.def.raid ? 'TREASURY STORMED!' : s.def.enc === 'ambush' ? 'AMBUSH SURVIVED!' : s.def.enc === 'patrol' ? 'PATROL DEFEATED!' : s.def.site === 'fort' ? 'FORT CAPTURED!' : s.def.enc === 'boss' ? 'LAIR CONQUERED!' : 'CAMP CLEARED!';
     this.game.ui.banner(what, s.def.name, [{ text: `💰 +${fmtMoney(gold)}`, gold: true }, { text: `⭐ +${xp} XP` }, ...(s.geo.chest ? [{ text: '🧰 Chest unlocked' }] : [])], '', 3.8);
     audio.play('mission');
     const f = this.player;
@@ -1941,7 +2002,7 @@ export class Combat implements CombatCtx {
         if (s.status === 'cleared') {
           this.prompt = '<kbd>E</kbd>🧰 OPEN THE CHEST';
           if (input.pressed('KeyE')) this.openSiteChest(s);
-        } else this.prompt = '🔒 Defeat the guards to open this chest';
+        } else this.prompt = s.def.raid && s.status === 'dormant' ? '🔒 Locked tight. Raid the port from the sea (<kbd>R</kbd> near its harbour) to crack it' : '🔒 Defeat the guards to open this chest';
       }
       const es = s.escort;
       if (es?.npc && es.phase === 'waiting' && !es.npc.f.dead && es.npc.f.pos.distanceTo(me) < 2.8) {
@@ -1968,7 +2029,7 @@ export class Combat implements CombatCtx {
   retry() {
     const f = this.player;
     // the fight(s) near the captain start over
-    const near = this.sites.filter((s) => s.land === this.land && s.status === 'active' && s.geo.center.distanceTo(f.pos) < 120);
+    const near = this.sites.filter((s) => s.land === this.land && s.status === 'active' && (s.def.raid || s.geo.center.distanceTo(f.pos) < 120));
     let spot: THREE.Vector3 | null = null;
     let heading = this.game.walker.heading;
     for (const s of near) {
@@ -1990,7 +2051,7 @@ export class Combat implements CombatCtx {
       if (y !== null && !this.area.blocked(back.x, back.z, 0.5)) start.set(back.x, y, back.z);
     }
     this.revivePlayer(start, heading);
-    for (const s of near) this.spawnSite(s);
+    for (const s of near) this.spawnRaidOr(s);
   }
 
   revivePlayer(at: THREE.Vector3, heading: number) {

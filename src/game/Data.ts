@@ -677,7 +677,18 @@ export interface Profile {
   shot: number;
   /** iron scrap for upgrading weapons */
   scrap: number;
-  land: { kills: number; bosses: string[]; cleared: Record<string, number>; escorts: number; defeats: number; /** combat tips already shown (bit flags) */ tut: number };
+  land: {
+    kills: number;
+    bosses: string[];
+    cleared: Record<string, number>;
+    escorts: number;
+    defeats: number;
+    /** combat tips already shown (bit flags) */
+    tut: number;
+    /** port id → day you last looted its treasury */
+    raids: Record<string, number>;
+    raided: number;
+  };
 }
 
 export function newProfile(): Profile {
@@ -719,7 +730,7 @@ export function newProfile(): Profile {
     hour: 9.5,
     market: null,
     ...starterArms(),
-    land: { kills: 0, bosses: [], cleared: {}, escorts: 0, defeats: 0, tut: 0 },
+    land: { kills: 0, bosses: [], cleared: {}, escorts: 0, defeats: 0, tut: 0, raids: {}, raided: 0 },
   };
 }
 

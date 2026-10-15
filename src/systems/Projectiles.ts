@@ -5,6 +5,7 @@ import { terrainHeight } from '../world/WorldData';
 import { audio } from '../core/Audio';
 import { addRim } from '../render/Materials';
 import { AMMO, AmmoId } from '../game/Data';
+import { difficultyMul } from '../game/Settings';
 
 interface Ball {
   mesh: THREE.Mesh;
@@ -91,12 +92,17 @@ export class Projectiles {
           if (Math.abs(this.local.x) > hw) continue;
           if (this.local.y < -0.8 || this.local.y > ship.model.mastTop * 0.8) continue;
           // hit!
-          ship.applyDamage(b.dmg, b.pos.clone(), b.owner);
+          ship.applyDamage(ship.team === 'player' ? b.dmg * difficultyMul().taken : b.dmg, b.pos.clone(), b.owner);
           this.game.onProjectileHit(b.owner, ship, b.ammo);
           done = true;
           break;
         }
         if (done) break;
+        // shore batteries (port raids)
+        if (b.owner.team === 'player' && b.pos.y < 12 && this.game.raid.hitTest(b.pos, b.dmg)) {
+          done = true;
+          break;
+        }
         const wy = ocean.heightApprox(b.pos.x, b.pos.z);
         if (b.pos.y < wy) {
           fx.splash(new THREE.Vector3(b.pos.x, wy, b.pos.z), 1);

@@ -1,4 +1,6 @@
 import { audio } from '../core/Audio';
+import { rekey } from '../game/Settings';
+import { SettingsUI, type SettingsHandlers } from './SettingsUI';
 
 const CONTROLS = `
   <div class="keys-cols">
@@ -10,6 +12,7 @@ const CONTROLS = `
     <div><kbd>Q</kbd></div><div>Switch ammo</div>
     <div><kbd>SHIFT</kbd></div><div>Speed boost</div>
     <div><kbd>E</kbd></div><div>Board ships · Dock at a port · Dig treasure</div>
+    <div><kbd>R</kbd></div><div>Raid a port (near its harbour)</div>
   </div>
   <div class="keys">
     <div class="kh">🚶 ON LAND</div><div></div>
@@ -17,15 +20,23 @@ const CONTROLS = `
     <div><kbd>SHIFT</kbd></div><div>Run</div>
     <div><kbd>SPACE</kbd></div><div>Jump</div>
     <div><kbd>E</kbd></div><div>Talk · Shop · Board your ship</div>
-    <div><kbd>TAB</kbd></div><div>Inventory</div>
+    <div><kbd>I</kbd></div><div>Inventory (also <kbd>TAB</kbd>)</div>
     <div><kbd>M</kbd></div><div>Map · <kbd>Esc</kbd> Pause</div>
+  </div>
+  <div class="keys">
+    <div class="kh">⚔️ FIGHTING</div><div></div>
+    <div><kbd>LMB</kbd></div><div>Attack (hold: heavy)</div>
+    <div><kbd>RMB</kbd></div><div>Block · aim a gun</div>
+    <div><kbd>SPACE</kbd></div><div>Dodge-roll</div>
+    <div><kbd>Q</kbd></div><div>Lock on (also <kbd>TAB</kbd>)</div>
+    <div><kbd>1</kbd><kbd>2</kbd></div><div>Blade / gun · <kbd>R</kbd> reload</div>
+    <div><kbd>X</kbd></div><div>Draw / put away</div>
   </div>
   </div>`;
 
-export interface ScreenHandlers {
+export interface ScreenHandlers extends SettingsHandlers {
   onPlay: (fresh: boolean) => void;
   onResume: () => void;
-  onQuality: (q: 'high' | 'medium' | 'low') => void;
   onRespawn: () => void;
   onCloseMap: () => void;
 }
@@ -37,6 +48,7 @@ export class Screens {
   loading: HTMLElement;
   bigmap: HTMLElement;
   bigmapCanvas: HTMLCanvasElement;
+  settings: SettingsUI;
 
   constructor(private h: ScreenHandlers, hasSave: boolean) {
     this.loading = this.el(`<div class="screen dim"><div class="title-logo"><div class="skull">🏴‍☠️</div><div class="l1">PIRATE<br/><span>RAIDERS</span></div></div><div class="loading" id="loadText">Charting the seas…</div></div>`);
@@ -46,18 +58,19 @@ export class Screens {
       <div class="menu-col">
         <button class="btn gold" id="playBtn">${hasSave ? '⛵ CONTINUE' : '⛵ SET SAIL!'}</button>
         ${hasSave ? '<button class="btn small red" id="newBtn">New Game</button>' : ''}
+        <button class="btn small" id="setBtn">⚙️ Settings</button>
         <button class="btn small" id="helpBtn">Controls</button>
       </div>
       <div class="credits">Made with Three.js · All models, music & sounds generated procedurally</div>
     </div>`);
 
-    this.pause = this.el(`<div class="screen dim hidden"><div class="panel">
+    this.pause = this.el(`<div class="screen dim hidden"><div class="panel pause-panel">
       <h2>⏸ Paused</h2>
-      ${CONTROLS}
-      <div class="opt-row" style="margin-top:18px">🎵 Music <input type="range" min="0" max="1" step="0.05" id="volMusic"></div>
-      <div class="opt-row">🔊 Effects <input type="range" min="0" max="1" step="0.05" id="volSfx"></div>
-      <div class="opt-row">🖥️ Graphics <span><button class="btn small" id="qHigh">High</button> <button class="btn small" id="qMed">Medium</button> <button class="btn small" id="qLow">Low</button></span></div>
-      <div style="text-align:center;margin-top:14px"><button class="btn green" id="resumeBtn">▶ Resume</button></div>
+      <div class="menu-col">
+        <button class="btn green" id="resumeBtn">▶ Resume</button>
+        <button class="btn" id="pSetBtn">⚙️ Settings</button>
+        <button class="btn" id="pHelpBtn">🧭 Controls</button>
+      </div>
     </div></div>`);
 
     this.over = this.el(`<div class="screen dim hidden"><div class="panel" style="text-align:center">
@@ -82,12 +95,22 @@ export class Screens {
       audio.play('click');
       this.h.onPlay(true);
     });
-    q('helpBtn').addEventListener('click', () => {
+    this.settings = new SettingsUI(h);
+    const showControls = () => {
       audio.init();
       audio.play('click');
-      const p = this.el(`<div class="screen dim"><div class="panel"><h2>🧭 Controls</h2>${CONTROLS}<div style="text-align:center;margin-top:16px"><button class="btn green">Got it!</button></div></div></div>`);
+      const p = this.el(`<div class="screen dim"><div class="panel"><h2>🧭 Controls</h2>${rekey(CONTROLS)}<div style="text-align:center;margin-top:16px"><button class="btn green">Got it!</button></div></div></div>`);
       p.querySelector('button')!.addEventListener('click', () => p.remove());
-    });
+    };
+    const showSettings = () => {
+      audio.init();
+      audio.play('click');
+      this.settings.show();
+    };
+    q('helpBtn').addEventListener('click', showControls);
+    q('pHelpBtn').addEventListener('click', showControls);
+    q('setBtn').addEventListener('click', showSettings);
+    q('pSetBtn').addEventListener('click', showSettings);
     q('resumeBtn').addEventListener('click', () => {
       audio.play('click');
       this.h.onResume();
@@ -96,23 +119,8 @@ export class Screens {
       audio.play('click');
       this.h.onRespawn();
     });
-    q('qHigh').addEventListener('click', () => this.h.onQuality('high'));
-    q('qMed').addEventListener('click', () => this.h.onQuality('medium'));
-    q('qLow').addEventListener('click', () => this.h.onQuality('low'));
     // go through the game so it knows the map is closed (otherwise you can't walk until you press M)
     q('mapClose').addEventListener('click', () => this.h.onCloseMap());
-    const vm = q('volMusic') as HTMLInputElement;
-    const vs = q('volSfx') as HTMLInputElement;
-    vm.value = String(audio.volumes.music);
-    vs.value = String(audio.volumes.sfx);
-    vm.addEventListener('input', () => {
-      audio.volumes.music = Number(vm.value);
-      audio.applyVolumes();
-    });
-    vs.addEventListener('input', () => {
-      audio.volumes.sfx = Number(vs.value);
-      audio.applyVolumes();
-    });
   }
 
   private el(html: string) {

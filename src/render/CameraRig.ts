@@ -4,6 +4,7 @@ import type { Input } from '../core/Input';
 import type { Ocean } from '../world/Ocean';
 import { terrainHeight } from '../world/WorldData';
 import { groundHeight } from '../world/Islands';
+import { settings } from '../game/Settings';
 
 export type CamMode = 'follow' | 'cinematic' | 'orbit' | 'walk';
 
@@ -68,7 +69,7 @@ export class CameraRig {
   }
 
   addShake(amount: number) {
-    this.trauma = clamp(this.trauma + amount, 0, 1);
+    this.trauma = clamp(this.trauma + amount * settings.shake, 0, 1);
   }
 
   /** Pull the chase camera back for bigger ships. */
@@ -128,8 +129,9 @@ export class CameraRig {
       if (input) {
         if (input.wheel) this.targetDist = clamp(this.targetDist * (1 + input.wheel * 0.1), this.minDist, this.maxDist);
         if (input.dragging && (input.mouseDX || input.mouseDY)) {
-          this.yawOffset -= input.mouseDX * 0.006;
-          this.pitchOffset = clamp(this.pitchOffset + input.mouseDY * 0.004, -0.22, 0.75);
+          const k = settings.mouseSens;
+          this.yawOffset -= input.mouseDX * 0.006 * k;
+          this.pitchOffset = clamp(this.pitchOffset + input.mouseDY * 0.004 * k * (settings.invertY ? -1 : 1), -0.22, 0.75);
         }
         const idle = performance.now() / 1000 - input.lastMouseMove;
         if (!input.dragging && idle > 2.2) {
@@ -161,8 +163,8 @@ export class CameraRig {
         if (input.wheel) this.walkTargetDist = clamp(this.walkTargetDist * (1 + input.wheel * 0.1), 3.2, 16);
         if ((input.dragging || input.pointerLocked) && (input.mouseDX || input.mouseDY)) {
           // captured mouse (combat free-look) moves in small steps, so it's a little less sensitive
-          const sx = input.pointerLocked ? 0.0034 : 0.006;
-          const sy = input.pointerLocked ? 0.0026 : 0.004;
+          const sx = (input.pointerLocked ? 0.0034 : 0.006) * settings.mouseSens;
+          const sy = (input.pointerLocked ? 0.0026 : 0.004) * settings.mouseSens * (settings.invertY ? -1 : 1);
           this.walkYaw -= input.mouseDX * sx;
           this.walkPitch = clamp(this.walkPitch + input.mouseDY * sy, 0.02, 1.25);
         }

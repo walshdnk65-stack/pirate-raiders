@@ -79,6 +79,8 @@ export class Ship {
   crewVisible = true;
   bumpCooldown = 0;
   ammo: AmmoId = 'round';
+  /** held level and still (lashed alongside for a boarding fight, so people can stand on deck) */
+  steady = false;
 
   constructor(game: Game, model: ShipModel, team: Team) {
     this.game = game;
@@ -223,6 +225,11 @@ export class Ship {
     this.pitchV += ((pitchT - this.pitch) * k - this.pitchV * c) * dt;
     this.roll += this.rollV * dt;
     this.pitch += this.pitchV * dt;
+    if (this.steady) {
+      this.pos.y = -0.1;
+      this.roll = this.pitch = this.rollV = this.pitchV = 0;
+      this.shake = 0;
+    }
     this.root.rotation.y = this.heading;
     this.body.rotation.set(-this.pitch, 0, this.roll);
     // impact shake
@@ -285,7 +292,8 @@ export class Ship {
     if (dmg < 0.3) this.smokeVents.length = 0;
     if (dmg > 0.45 && this.smokeVents.length === 0) this.addSmokeVent();
     if (dmg > 0.72 && this.smokeVents.length === 1) this.addSmokeVent();
-    if (dmg > 0.45) {
+    // (no smoke columns on a deck people are fighting on)
+    if (dmg > 0.45 && !this.steady) {
       this.smokeT -= dt;
       if (this.smokeT <= 0) {
         this.smokeT = 0.07;

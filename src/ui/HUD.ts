@@ -6,6 +6,7 @@ import { fmtMoney, clamp } from '../core/math';
 import { xpForLevel, AMMO } from '../game/Data';
 import { Minimap } from './Minimap';
 import { audio } from '../core/Audio';
+import { settings, rekey } from '../game/Settings';
 
 interface Floater {
   el: HTMLElement;
@@ -313,6 +314,7 @@ export class HUD {
   }
 
   damageNumber(pos: THREE.Vector3, amount: number, kind: 'player' | 'enemy') {
+    if (!settings.damageNumbers) return;
     this.spawnFloater(pos.clone().add(new THREE.Vector3(0, 2, 0)), `-${amount}`, `dmg ${kind} ${amount >= 25 ? 'big' : ''}`, 1.0, 80);
   }
 
@@ -322,6 +324,7 @@ export class HUD {
 
   /** Land-combat numbers and callouts (damage, BLOCKED, PARRY!, pickups). */
   combatText(pos: THREE.Vector3, text: string, cls: string) {
+    if (!settings.damageNumbers && (cls === 'hurt' || cls === 'dmg' || cls === 'crit' || cls === 'big' || cls === 'chip' || cls === 'ally')) return;
     this.spawnFloater(pos, text, `cf ${cls}`, cls === 'crit' || cls === 'parry' || cls === 'big' ? 1.0 : 0.8, cls === 'pickup' || cls === 'heal' ? 40 : 55);
   }
 
@@ -417,13 +420,13 @@ export class HUD {
       return;
     }
     el.className = 'prompt ' + style;
-    el.innerHTML = text;
+    el.innerHTML = rekey(text);
   }
 
   toast(title: string, sub: string, kind: 'danger' | 'good' | 'mission' | 'info' = 'info') {
     const el = document.createElement('div');
     el.className = `toast ${kind}`;
-    el.innerHTML = `<div class="t1">${title}</div>${sub ? `<div class="t2">${sub}</div>` : ''}`;
+    el.innerHTML = rekey(`<div class="t1">${title}</div>${sub ? `<div class="t2">${sub}</div>` : ''}`);
     this.els.toasts.appendChild(el);
     setTimeout(() => el.remove(), 3900);
     while (this.els.toasts.children.length > 3) this.els.toasts.firstElementChild!.remove();
@@ -506,13 +509,15 @@ export class HUD {
   }
 
   /** Controls reminder for sailing vs walking. */
-  setHintMode(mode: 'sea' | 'land') {
-    if (this.cache.hintMode === mode) return;
+  setHintMode(mode: 'sea' | 'land', force = false) {
+    if (this.cache.hintMode === mode && !force) return;
     this.cache.hintMode = mode;
-    this.els.hint.innerHTML =
+    this.promptText = null;
+    this.els.hint.innerHTML = rekey(
       mode === 'sea'
         ? `<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> sail &nbsp; <kbd>SPACE</kbd> fire &nbsp; <kbd>Q</kbd> ammo<br/><kbd>SHIFT</kbd> boost &nbsp; <kbd>E</kbd> dock &nbsp; <kbd>TAB</kbd> items &nbsp; <kbd>M</kbd> map &nbsp; <kbd>Esc</kbd> pause`
-        : `<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk &nbsp; <kbd>SHIFT</kbd> run &nbsp; <kbd>SPACE</kbd> jump &nbsp; <kbd>E</kbd> interact &nbsp; <kbd>X</kbd> draw weapon<br/><kbd>Drag</kbd> look &nbsp; <kbd>Wheel</kbd> zoom &nbsp; <kbd>TAB</kbd> inventory &nbsp; <kbd>M</kbd> map &nbsp; <kbd>Esc</kbd> pause`;
+        : `<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk &nbsp; <kbd>SHIFT</kbd> run &nbsp; <kbd>SPACE</kbd> jump &nbsp; <kbd>E</kbd> interact &nbsp; <kbd>X</kbd> draw weapon<br/><kbd>Drag</kbd> look &nbsp; <kbd>Wheel</kbd> zoom &nbsp; <kbd>TAB</kbd> inventory &nbsp; <kbd>M</kbd> map &nbsp; <kbd>Esc</kbd> pause`,
+    );
     this.els.mmHint.textContent = mode === 'sea' ? '[M] World map' : '[M] Map';
   }
 
